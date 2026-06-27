@@ -23,20 +23,21 @@ tab1, tab2, tab3 = st.tabs(["Access Map", "Demand & Supply", "Proposed Facilitie
 
 with tab1:
     st.subheader("15-Minute Healthcare Access Zones")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Facilities", len(facilities))
-    col2.metric("Population With Access", "20.2%")
-    col3.metric("Population Without Access", "3,991,826")
-
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Facilities", "253")
+    col2.metric("Population Served", "968,057")
+    col3.metric("Coverage", "19.8%")
+    col4.metric("Unserved Population", "3,910,393")
+    
     st.sidebar.header("Map Layers")
     show_iso = st.sidebar.checkbox("Show Access Zones", value=True)
     show_unserved = st.sidebar.checkbox("Show Unserved Areas", value=True)
     show_proposed = st.sidebar.checkbox("Show Proposed Facilities", value=True)
     show_load = st.sidebar.checkbox("Colour by Load Status", value=False)
-
+    
     m = folium.Map(location=[22.5726, 88.3639], zoom_start=11, tiles="CartoDB positron")
-
+    
     if show_unserved:
         folium.GeoJson(
             unserved.__geo_interface__,
@@ -46,10 +47,9 @@ with tab1:
                 "fillOpacity": 0.25,
                 "weight": 0
             },
-            name="Unserved Areas",
-            tooltip="Unserved Area"
+            tooltip="Unserved Area — no facility within 15 min"
         ).add_to(m)
-
+    
     if show_iso:
         load_colors = {"Overloaded": "#e377c2", "Normal": "#2ca02c", "Underutilized": "#aec7e8"}
         for _, row in isochrones.iterrows():
@@ -65,7 +65,7 @@ with tab1:
                     "weight": 0.5
                 }
             ).add_to(m)
-
+    
     for _, row in facilities.iterrows():
         folium.CircleMarker(
             location=[row.geometry.y, row.geometry.x],
@@ -75,7 +75,7 @@ with tab1:
             fill_opacity=0.8,
             popup=str(row.get("name", "Unnamed Facility"))
         ).add_to(m)
-
+    
     if show_proposed:
         for i, row in proposed.iterrows():
             folium.CircleMarker(
@@ -85,68 +85,93 @@ with tab1:
                 fill=True,
                 fill_color="#ff7f0e",
                 fill_opacity=0.9,
-                popup=f"PROPOSED: {row['facility_id']}<br>Est. {row['pop_gain']:,.0f} people served"
+                popup=f"PROPOSED Facility {i+1}<br>Population newly served: {row['pop_gain']:,.0f}"
             ).add_to(m)
-
+    
     folium.LayerControl().add_to(m)
     st_folium(m, width=1100, height=560)
 
 with tab2:
     st.subheader("Demand vs Supply Analysis")
-
+    
     col1, col2 = st.columns(2)
-
+    
     with col1:
         st.markdown("**Load Status Distribution**")
         load_counts = isochrones["load_status"].value_counts().reset_index()
         load_counts.columns = ["Status", "Count"]
         st.dataframe(load_counts, use_container_width=True)
-
-    with col2:
+        
         st.markdown("**Population Stats**")
         st.dataframe(
-            isochrones[["name", "pop_served", "load_status"]]
+            isochrones[["name","pop_served","load_status"]]
             .sort_values("pop_served", ascending=False)
             .head(10)
             .reset_index(drop=True),
             use_container_width=True
         )
-
-    st.markdown("---")
-    st.markdown("**Methodology Note**")
-    st.info(
-        "Population assigned to nearest facility using Voronoi-style nearest-neighbour assignment. "
-        "Overloaded = >1.5x median load. Underutilized = <0.5x median load. "
-        "Speed assumption: 25 km/h (conservative for Kolkata peak traffic). "
-        "Population data: WorldPop 2020 proxy grid (500m resolution, uniform distribution)."
-    )
+    
+    with col2:
+        st.markdown("**Key Findings**")
+        st.info("""
+        - 94 facilities are overloaded (serving >1.5x median population)
+        - 65 facilities are underutilized (serving <0.5x median population)
+        - Average population per facility: 10,258
+        - Most overloaded facility serves 161,624 people
+        - Facilities are concentrated in central Kolkata
+        - Peripheral areas — south, east, north — are severely underserved
+        """)
+        
+        st.markdown("**Methodology**")
+        st.warning("""
+        - Travel time: 15 min threshold, 25 km/h average speed
+        - Mode: private vehicle / auto-rickshaw
+        - Population: WorldPop 2020 UNadj constrained (100m resolution)
+        - Total population: 4,878,450
+        - Assignment: nearest-neighbour Voronoi approach
+        """)
 
 with tab3:
     st.subheader("Proposed Facility Locations & Impact")
-
-    st.markdown("Up to 3 new facilities proposed to maximise population brought within 15-minute access.")
-
-    cumulative = 0
-    baseline_unserved = 3_991_826
-
-    for i, row in proposed.iterrows():
-        cumulative += row["pop_gain"]
-        pct_improvement = (row["pop_gain"] / baseline_unserved) * 100
-
-        with st.expander(f"Facility {i+1} — {row['pop_gain']:,.0f} people newly served", expanded=True):
-            col1, col2 = st.columns(2)
-            col1.metric("Additional People Served", f"{row['pop_gain']:,.0f}")
-            col2.metric("% of Unserved Population", f"{pct_improvement:.1f}%")
+    
+    baseline_unserved = 3_910_393
+    total_pop = 4_878_450
+    baseline_coverage = 19.8
+    
+    facility_data = [
+        {"pop_gain": 1_030_307, "cumulative": 1_030_307, "coverage": 40.9},
+        {"pop_gain": 1_005_734, "cumulative": 2_036_042, "coverage": 61.5},
+        {"pop_gain": 982_589,  "cumulative": 3_018_631, "coverage": 81.7},
+    ]
+    
+    for i, (row, data) in enumerate(zip(proposed.itertuples(), facility_data)):
+        with st.expander(f"Facility {i+1} — {data['pop_gain']:,.0f} people newly served", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            col1.metric("People Newly Served", f"{data['pop_gain']:,.0f}")
+            col2.metric("Cumulative Coverage", f"{data['coverage']:.1f}%")
+            col3.metric("Coverage Gain", f"+{data['coverage'] - baseline_coverage:.1f}%")
             st.write(f"Location: ({row.geometry.y:.4f}°N, {row.geometry.x:.4f}°E)")
-
+    
     st.markdown("---")
-    st.success(
-        f"3 facilities bring **{cumulative:,.0f} additional people** within 15-min access. "
-        f"Coverage improves from 20.2% to ~67%. "
-        f"Remaining unserved: {baseline_unserved - cumulative:,.0f} people."
-    )
-    st.warning(
-        "Marginal return is similar across all 3 facilities due to uniform population grid. "
-        "With ward-level census data, placement would be more precise. "
-        "This is acknowledged as a limitation of the current data approach."
-    )
+    
+    col1, col2 = st.columns(2)
+    col1.metric("Coverage Before", "19.8%")
+    col2.metric("Coverage After 3 Facilities", "81.7%")
+    
+    st.success("""
+    **Decision: All 3 facilities are justified.**
+    
+    Facility 1 adds 1,030,307 people to coverage — clear priority.
+    Facility 2 adds 1,005,734 — marginal drop of only 2.4%, still high impact.
+    Facility 3 adds 982,589 — further 2.3% drop, but brings coverage to 81.7%.
+    
+    Return diminishes slightly with each facility but remains substantial.
+    All 3 placements are recommended given the scale of the access gap.
+    """)
+    
+    st.warning("""
+    **Limitations:** 
+    Speed assumption (25 km/h) does not account for peak-hour congestion.
+    Facility capacity data unavailable — load is estimated by population proximity only.
+    Proposed locations are road-network candidates, not assessed for land availability.
+    """)
